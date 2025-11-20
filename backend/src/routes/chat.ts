@@ -25,7 +25,6 @@ chatRouter.post('/', async (req: Request, res: Response) => {
       new SystemMessage('You are a helpful AI assistant.'),
       new HumanMessage(message),
     ];
-
     // Invoke the model
     const response = await model.invoke(messages);
 
@@ -49,7 +48,7 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
     }
 
     const model = new ChatGoogleGenerativeAI({
-      modelName: 'gemini-pro',
+      modelName: 'gemini-2.0-flash',
       temperature: 0.7,
       apiKey: process.env.GOOGLE_API_KEY,
       streaming: true,
@@ -64,6 +63,8 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    
+    console.log("messages", messages);
 
     const stream = await model.stream(messages);
 
