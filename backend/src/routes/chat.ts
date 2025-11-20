@@ -1,13 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import multer from 'multer';
 
 export const chatRouter = Router();
 
+// Configure multer for file uploads (store in memory)
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
 // Simple chat endpoint using LangChain
-chatRouter.post('/', async (req: Request, res: Response) => {
+chatRouter.post('/', upload.array('files', 10), async (req: Request, res: Response) => {
   try {
     const { message } = req.body;
+    const files = req.files as Express.Multer.File[];
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
@@ -20,11 +28,37 @@ chatRouter.post('/', async (req: Request, res: Response) => {
       apiKey: process.env.GOOGLE_API_KEY,
     });
 
+    // Create message content with text and images
+    const messageContent: any[] = [{ type: 'text', text: message }];
+
+    // Add images/files if provided
+    if (files && files.length > 0) {
+      for (const file of files) {
+        // Check if file is an image
+        if (file.mimetype.startsWith('image/')) {
+          messageContent.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+            },
+          });
+        } else {
+          // For non-image files, include filename and content as text
+          const fileText = file.buffer.toString('utf-8');
+          messageContent.push({
+            type: 'text',
+            text: `\n\n[File: ${file.originalname}]\n${fileText}`,
+          });
+        }
+      }
+    }
+
     // Create messages
     const messages = [
-      new SystemMessage('You are a helpful AI assistant.'),
-      new HumanMessage(message),
+      new SystemMessage('You are a helpful AI assistant that can analyze images and files.'),
+      new HumanMessage({ content: messageContent }),
     ];
+    
     // Invoke the model
     const response = await model.invoke(messages);
 
@@ -39,9 +73,10 @@ chatRouter.post('/', async (req: Request, res: Response) => {
 });
 
 // Stream chat endpoint
-chatRouter.post('/stream', async (req: Request, res: Response) => {
+chatRouter.post('/stream', upload.array('files', 10), async (req: Request, res: Response) => {
   try {
     const { message } = req.body;
+    const files = req.files as Express.Multer.File[];
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
@@ -54,9 +89,34 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
       streaming: true,
     });
 
+    // Create message content with text and images
+    const messageContent: any[] = [{ type: 'text', text: message }];
+
+    // Add images/files if provided
+    if (files && files.length > 0) {
+      for (const file of files) {
+        // Check if file is an image
+        if (file.mimetype.startsWith('image/')) {
+          messageContent.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+            },
+          });
+        } else {
+          // For non-image files, include filename and content as text
+          const fileText = file.buffer.toString('utf-8');
+          messageContent.push({
+            type: 'text',
+            text: `\n\n[File: ${file.originalname}]\n${fileText}`,
+          });
+        }
+      }
+    }
+
     const messages = [
-      new SystemMessage('You are a helpful AI assistant.'),
-      new HumanMessage(message),
+      new SystemMessage('You are a helpful AI assistant that can analyze images and files.'),
+      new HumanMessage({ content: messageContent }),
     ];
 
     // Set headers for SSE
@@ -64,7 +124,7 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     
-    console.log("messages", messages);
+    console.log("messages with files", files?.length || 0);
 
     const stream = await model.stream(messages);
 

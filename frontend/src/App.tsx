@@ -5,6 +5,7 @@ import './App.css';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  files?: { name: string; type: string; preview?: string }[];
 }
 
 function App() {
@@ -12,14 +13,38 @@ function App() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<'chat' | 'graph'>('chat');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setSelectedFiles(Array.from(e.target.files));
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(selectedFiles.filter((_, i) => i !== index));
+  };
 
   const sendMessage = async () => {
     if (!input.trim()) return;
 
-    const userMessage: Message = { role: 'user', content: input };
+    // Store file info for display
+    const fileInfo = selectedFiles.map(f => ({
+      name: f.name,
+      type: f.type,
+      preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
+    }));
+
+    const userMessage: Message = { 
+      role: 'user', 
+      content: input,
+      files: fileInfo.length > 0 ? fileInfo : undefined,
+    };
     setMessages([...messages, userMessage]);
     const currentInput = input;
+    const currentFiles = selectedFiles;
     setInput('');
+    setSelectedFiles([]);
     setLoading(true);
 
     try {
@@ -32,12 +57,16 @@ function App() {
         { role: 'assistant', content: '' },
       ]);
 
+      // Create FormData for file upload
+      const formData = new FormData();
+      formData.append('message', currentInput);
+      currentFiles.forEach((file) => {
+        formData.append('files', file);
+      });
+
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: currentInput }),
+        body: formData,
       });
 
       if (!response.ok) {
@@ -151,6 +180,19 @@ function App() {
           {messages.map((msg, idx) => (
             <div key={idx} className={`message ${msg.role}`}>
               <strong>{msg.role === 'user' ? 'You' : 'Assistant'}:</strong>
+              {msg.files && msg.files.length > 0 && (
+                <div className="message-files">
+                  {msg.files.map((file, fileIdx) => (
+                    <div key={fileIdx} className="file-attachment">
+                      {file.preview ? (
+                        <img src={file.preview} alt={file.name} className="file-preview" />
+                      ) : (
+                        <div className="file-icon">📄 {file.name}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               <p>{msg.content}</p>
             </div>
           ))}
@@ -162,7 +204,33 @@ function App() {
           )}
         </div>
 
+        {selectedFiles.length > 0 && (
+          <div className="selected-files">
+            {selectedFiles.map((file, idx) => (
+              <div key={idx} className="selected-file">
+                {file.type.startsWith('image/') ? (
+                  <img src={URL.createObjectURL(file)} alt={file.name} className="file-preview-small" />
+                ) : (
+                  <span className="file-name">📄 {file.name}</span>
+                )}
+                <button onClick={() => removeFile(idx)} className="remove-file">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="input-container">
+          <input
+            type="file"
+            id="file-input"
+            multiple
+            accept="image/*,.txt,.pdf,.doc,.docx,.json,.csv"
+            onChange={handleFileSelect}
+            style={{ display: 'none' }}
+          />
+          <label htmlFor="file-input" className="file-button" title="Attach files">
+            📎
+          </label>
           <input
             type="text"
             value={input}

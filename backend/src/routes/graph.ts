@@ -1,13 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { HumanMessage, BaseMessage, SystemMessage } from '@langchain/core/messages';
+import multer from 'multer';
 
 export const graphRouter = Router();
 
+// Configure multer for file uploads
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
 // Stream endpoint for graph workflow
-graphRouter.post('/stream', async (req: Request, res: Response) => {
+graphRouter.post('/stream', upload.array('files', 10), async (req: Request, res: Response) => {
   try {
     const { message } = req.body;
+    const files = req.files as Express.Multer.File[];
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
@@ -25,7 +33,30 @@ graphRouter.post('/stream', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const messages = [new HumanMessage(message)];
+    // Create message content with text and images
+    const messageContent: any[] = [{ type: 'text', text: message }];
+
+    // Add images/files if provided
+    if (files && files.length > 0) {
+      for (const file of files) {
+        if (file.mimetype.startsWith('image/')) {
+          messageContent.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+            },
+          });
+        } else {
+          const fileText = file.buffer.toString('utf-8');
+          messageContent.push({
+            type: 'text',
+            text: `\n\n[File: ${file.originalname}]\n${fileText}`,
+          });
+        }
+      }
+    }
+
+    const messages = [new HumanMessage({ content: messageContent })];
     const stream = await model.stream(messages);
 
     for await (const chunk of stream) {
