@@ -2,10 +2,17 @@ import { useState } from 'react';
 import axios from 'axios';
 import './App.css';
 
+interface ToolCall {
+  name: string;
+  args: any;
+  result: string;
+}
+
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   files?: { name: string; type: string; preview?: string }[];
+  toolCalls?: ToolCall[];
 }
 
 function App() {
@@ -81,6 +88,7 @@ function App() {
       }
 
       let accumulatedContent = '';
+      const toolCalls: ToolCall[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -97,15 +105,37 @@ function App() {
             }
             try {
               const parsed = JSON.parse(data);
-              accumulatedContent += parsed.content;
-              setMessages((prev) => {
-                const newMessages = [...prev];
-                newMessages[assistantMessageIndex] = {
-                  role: 'assistant',
-                  content: accumulatedContent,
-                };
-                return newMessages;
-              });
+              
+              // Handle tool calls
+              if (parsed.type === 'tool_call') {
+                toolCalls.push({
+                  name: parsed.name,
+                  args: parsed.args,
+                  result: parsed.result,
+                });
+                
+                setMessages((prev) => {
+                  const newMessages = [...prev];
+                  newMessages[assistantMessageIndex] = {
+                    role: 'assistant',
+                    content: accumulatedContent,
+                    toolCalls: [...toolCalls],
+                  };
+                  return newMessages;
+                });
+              } else if (parsed.content) {
+                // Handle regular content
+                accumulatedContent += parsed.content;
+                setMessages((prev) => {
+                  const newMessages = [...prev];
+                  newMessages[assistantMessageIndex] = {
+                    role: 'assistant',
+                    content: accumulatedContent,
+                    toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
+                  };
+                  return newMessages;
+                });
+              }
             } catch (e) {
               // Skip invalid JSON
             }
@@ -189,6 +219,22 @@ function App() {
                       ) : (
                         <div className="file-icon">📄 {file.name}</div>
                       )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {msg.toolCalls && msg.toolCalls.length > 0 && (
+                <div className="tool-calls">
+                  <div className="tool-calls-header">🔧 Tools Used:</div>
+                  {msg.toolCalls.map((toolCall, tcIdx) => (
+                    <div key={tcIdx} className="tool-call">
+                      <div className="tool-name">{toolCall.name}</div>
+                      <div className="tool-args">
+                        <strong>Args:</strong> {JSON.stringify(toolCall.args)}
+                      </div>
+                      <div className="tool-result">
+                        <strong>Result:</strong> {toolCall.result}
+                      </div>
                     </div>
                   ))}
                 </div>

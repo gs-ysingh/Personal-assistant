@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
 import multer from 'multer';
+import { mcpTools } from '../tools/mcpTools';
 
 export const chatRouter = Router();
 
@@ -21,11 +22,15 @@ chatRouter.post('/', upload.array('files', 10), async (req: Request, res: Respon
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Initialize ChatGoogleGenerativeAI model
+    // Initialize ChatGoogleGenerativeAI model with tool binding
     const model = new ChatGoogleGenerativeAI({
       modelName: 'gemini-2.0-flash',
       temperature: 0.7,
       apiKey: process.env.GOOGLE_API_KEY,
+    });
+    
+    const modelWithTools = model.bind({
+      tools: mcpTools,
     });
 
     // Create message content with text and images
@@ -55,15 +60,49 @@ chatRouter.post('/', upload.array('files', 10), async (req: Request, res: Respon
 
     // Create messages
     const messages = [
-      new SystemMessage('You are a helpful AI assistant that can analyze images and files.'),
+      new SystemMessage('You are a helpful AI assistant that can analyze images and files. You have access to tools like get_current_time, calculate, search_web, and get_weather. Use them when appropriate.'),
       new HumanMessage({ content: messageContent }),
     ];
     
-    // Invoke the model
-    const response = await model.invoke(messages);
+    // Invoke the model with tools
+    const response = await modelWithTools.invoke(messages);
+    
+    // Check if model wants to use tools
+    const toolCalls: any[] = [];
+    let finalResponse = response.content;
+    
+    if (response.additional_kwargs?.tool_calls) {
+      // Execute tool calls
+      for (const toolCall of response.additional_kwargs.tool_calls) {
+        const tool = mcpTools.find(t => t.name === toolCall.function.name);
+        if (tool) {
+          const toolArgs = JSON.parse(toolCall.function.arguments);
+          const toolResult = await tool.func(toolArgs);
+          toolCalls.push({
+            name: toolCall.function.name,
+            args: toolArgs,
+            result: toolResult,
+          });
+        }
+      }
+      
+      // If tools were called, get final response with tool results
+      if (toolCalls.length > 0) {
+        const messagesWithTools = [
+          ...messages,
+          response,
+          ...toolCalls.map(tc => new AIMessage({
+            content: `Tool ${tc.name} result: ${tc.result}`,
+          })),
+        ];
+        const finalAIResponse = await model.invoke(messagesWithTools);
+        finalResponse = finalAIResponse.content;
+      }
+    }
 
     res.json({
-      response: response.content,
+      response: finalResponse,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -87,6 +126,10 @@ chatRouter.post('/stream', upload.array('files', 10), async (req: Request, res: 
       temperature: 0.7,
       apiKey: process.env.GOOGLE_API_KEY,
       streaming: true,
+    });
+    
+    const modelWithTools = model.bind({
+      tools: mcpTools,
     });
 
     // Create message content with text and images
@@ -115,7 +158,7 @@ chatRouter.post('/stream', upload.array('files', 10), async (req: Request, res: 
     }
 
     const messages = [
-      new SystemMessage('You are a helpful AI assistant that can analyze images and files.'),
+      new SystemMessage('You are a helpful AI assistant that can analyze images and files. You have access to tools like get_current_time, calculate, search_web, and get_weather. Use them when appropriate.'),
       new HumanMessage({ content: messageContent }),
     ];
 
@@ -126,10 +169,53 @@ chatRouter.post('/stream', upload.array('files', 10), async (req: Request, res: 
     
     console.log("messages with files", files?.length || 0);
 
-    const stream = await model.stream(messages);
-
-    for await (const chunk of stream) {
-      res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+    // First pass - check for tool calls
+    const firstResponse = await modelWithTools.invoke(messages);
+    
+    if (firstResponse.additional_kwargs?.tool_calls) {
+      // Execute tool calls and send results
+      const toolCalls: any[] = [];
+      
+      for (const toolCall of firstResponse.additional_kwargs.tool_calls) {
+        const tool = mcpTools.find(t => t.name === toolCall.function.name);
+        if (tool) {
+          const toolArgs = JSON.parse(toolCall.function.arguments);
+          const toolResult = await tool.func(toolArgs);
+          toolCalls.push({
+            name: toolCall.function.name,
+            args: toolArgs,
+            result: toolResult,
+          });
+          
+          // Stream tool call info
+          res.write(`data: ${JSON.stringify({ 
+            type: 'tool_call',
+            name: toolCall.function.name,
+            args: toolArgs,
+            result: toolResult 
+          })}\n\n`);
+        }
+      }
+      
+      // Stream final response with tool results
+      const messagesWithTools = [
+        ...messages,
+        firstResponse,
+        ...toolCalls.map(tc => new AIMessage({
+          content: `Tool ${tc.name} result: ${tc.result}`,
+        })),
+      ];
+      
+      const stream = await model.stream(messagesWithTools);
+      for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+      }
+    } else {
+      // No tool calls, stream normally
+      const stream = await model.stream(messages);
+      for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+      }
     }
 
     res.write('data: [DONE]\n\n');

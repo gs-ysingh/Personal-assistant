@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { HumanMessage, BaseMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage, BaseMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
 import multer from 'multer';
+import { mcpTools } from '../tools/mcpTools';
 
 export const graphRouter = Router();
 
@@ -26,6 +27,10 @@ graphRouter.post('/stream', upload.array('files', 10), async (req: Request, res:
       temperature: 0.7,
       apiKey: process.env.GOOGLE_API_KEY,
       streaming: true,
+    });
+    
+    const modelWithTools = model.bind({
+      tools: mcpTools,
     });
 
     // Set headers for SSE
@@ -56,11 +61,54 @@ graphRouter.post('/stream', upload.array('files', 10), async (req: Request, res:
       }
     }
 
-    const messages = [new HumanMessage({ content: messageContent })];
-    const stream = await model.stream(messages);
-
-    for await (const chunk of stream) {
-      res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+    const messages = [
+      new SystemMessage('You are a helpful AI assistant with access to tools. Use them when needed.'),
+      new HumanMessage({ content: messageContent })
+    ];
+    
+    // Check for tool calls first
+    const firstResponse = await modelWithTools.invoke(messages);
+    
+    if (firstResponse.additional_kwargs?.tool_calls) {
+      const toolCalls: any[] = [];
+      
+      for (const toolCall of firstResponse.additional_kwargs.tool_calls) {
+        const tool = mcpTools.find(t => t.name === toolCall.function.name);
+        if (tool) {
+          const toolArgs = JSON.parse(toolCall.function.arguments);
+          const toolResult = await tool.func(toolArgs);
+          toolCalls.push({
+            name: toolCall.function.name,
+            args: toolArgs,
+            result: toolResult,
+          });
+          
+          res.write(`data: ${JSON.stringify({ 
+            type: 'tool_call',
+            name: toolCall.function.name,
+            args: toolArgs,
+            result: toolResult 
+          })}\n\n`);
+        }
+      }
+      
+      const messagesWithTools = [
+        ...messages,
+        firstResponse,
+        ...toolCalls.map(tc => new AIMessage({
+          content: `Tool ${tc.name} result: ${tc.result}`,
+        })),
+      ];
+      
+      const stream = await model.stream(messagesWithTools);
+      for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+      }
+    } else {
+      const stream = await model.stream(messages);
+      for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+      }
     }
 
     res.write('data: [DONE]\n\n');
@@ -87,16 +135,52 @@ graphRouter.post('/workflow', async (req: Request, res: Response) => {
       temperature: 0.7,
       apiKey: process.env.GOOGLE_API_KEY,
     });
+    
+    const modelWithTools = model.bind({
+      tools: mcpTools,
+    });
 
     const messages = [
-      new SystemMessage('You are a helpful AI assistant processing a workflow.'),
+      new SystemMessage('You are a helpful AI assistant processing a workflow. You have access to tools like get_current_time, calculate, search_web, and get_weather.'),
       new HumanMessage(message)
     ];
     
-    const response = await model.invoke(messages);
+    const response = await modelWithTools.invoke(messages);
+    
+    // Handle tool calls
+    const toolCalls: any[] = [];
+    let finalResponse = response.content;
+    
+    if (response.additional_kwargs?.tool_calls) {
+      for (const toolCall of response.additional_kwargs.tool_calls) {
+        const tool = mcpTools.find(t => t.name === toolCall.function.name);
+        if (tool) {
+          const toolArgs = JSON.parse(toolCall.function.arguments);
+          const toolResult = await tool.func(toolArgs);
+          toolCalls.push({
+            name: toolCall.function.name,
+            args: toolArgs,
+            result: toolResult,
+          });
+        }
+      }
+      
+      if (toolCalls.length > 0) {
+        const messagesWithTools = [
+          ...messages,
+          response,
+          ...toolCalls.map(tc => new AIMessage({
+            content: `Tool ${tc.name} result: ${tc.result}`,
+          })),
+        ];
+        const finalAIResponse = await model.invoke(messagesWithTools);
+        finalResponse = finalAIResponse.content;
+      }
+    }
 
     res.json({
-      response: response.content,
+      response: finalResponse,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -118,18 +202,24 @@ graphRouter.post('/multi-step', async (req: Request, res: Response) => {
       modelName: 'gemini-2.0-flash',
       apiKey: process.env.GOOGLE_API_KEY,
     });
+    
+    const modelWithTools = model.bind({
+      tools: mcpTools,
+    });
 
     // Step 1: Create a plan
-    const planningPrompt = new HumanMessage(
-      `Create a step-by-step plan for: ${task}`
-    );
-    const planResponse = await model.invoke([planningPrompt]);
+    const planningPrompt = [
+      new SystemMessage('You are a planning assistant. You can use tools to gather information.'),
+      new HumanMessage(`Create a step-by-step plan for: ${task}`)
+    ];
+    const planResponse = await modelWithTools.invoke(planningPrompt);
 
     // Step 2: Execute based on the plan
-    const executionPrompt = new HumanMessage(
-      `Based on this plan: ${planResponse.content}, provide a detailed execution strategy.`
-    );
-    const executionResponse = await model.invoke([executionPrompt]);
+    const executionPrompt = [
+      new SystemMessage('You are an execution assistant. Use available tools to help with the execution.'),
+      new HumanMessage(`Based on this plan: ${planResponse.content}, provide a detailed execution strategy.`)
+    ];
+    const executionResponse = await modelWithTools.invoke(executionPrompt);
 
     res.json({
       plan: planResponse.content,

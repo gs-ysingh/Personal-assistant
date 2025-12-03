@@ -33,16 +33,24 @@ Personal-assistant/
 - **Express API Server** with TypeScript
 - **LangChain Integration** for AI-powered chat
 - **LangGraph Workflows** for multi-step AI operations
+- **MCP (Model Context Protocol) Tool Calling** - AI can use tools dynamically
 - **RESTful API Endpoints**:
   - `/api/chat` - Simple chat with LangChain
-  - `/api/chat/stream` - Streaming chat responses
+  - `/api/chat/stream` - Streaming chat responses with tool calling
   - `/api/graph/workflow` - Single-step graph workflow
   - `/api/graph/multi-step` - Multi-step planning and execution
+- **Built-in Tools**:
+  - `get_current_time` - Get time in any timezone
+  - `calculate` - Perform mathematical calculations
+  - `search_web` - Web search (simulated)
+  - `get_weather` - Weather information (simulated)
 
 ### Frontend
 - **React 18** with TypeScript
 - **Vite** for fast development and building
 - **Modern UI** with responsive design
+- **Tool Call Display** - Shows when AI uses tools with arguments and results
+- **File Upload Support** - Attach images and documents
 - **Two Modes**:
   - Simple Chat: Direct LangChain conversations
   - Graph Workflow: Multi-step LangGraph operations
@@ -237,6 +245,38 @@ myWorkflow.addEdge('__start__', 'step1');
 myWorkflow.addEdge('step1', 'step2');
 myWorkflow.addEdge('step2', END);
 ```
+
+## 🔧 MCP Tool Calling
+
+This application includes **Model Context Protocol (MCP)** integration, allowing the AI to dynamically use tools during conversations.
+
+### Available Tools
+
+- **get_current_time**: Get time in any timezone
+- **calculate**: Perform math calculations
+- **search_web**: Search for information (simulated)
+- **get_weather**: Get weather data (simulated)
+
+### Example Prompts
+
+Try these to see tool calling in action:
+
+```
+"What time is it in Tokyo?"
+"Calculate 25 * 4 + 100"
+"What's the weather in London?"
+"What's 15 * 23 and what time is it in New York?"
+```
+
+The UI will show tool calls with their arguments and results before displaying the final response.
+
+### Adding New Tools
+
+See **[MCP_TOOL_CALLING_GUIDE.md](./MCP_TOOL_CALLING_GUIDE.md)** and **[README_MCP_IMPLEMENTATION.md](./README_MCP_IMPLEMENTATION.md)** for detailed documentation on:
+- How tool calling works
+- Adding custom tools
+- Production considerations
+- API format and examples
 
 ## 🐛 Troubleshooting
 
